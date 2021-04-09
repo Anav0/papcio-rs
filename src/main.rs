@@ -1,14 +1,17 @@
 #![allow(dead_code)]
+use regex::Regex;
 use std::collections::HashMap;
 use std::env;
 use std::fs;
 use std::fs::File;
 use std::io;
 use std::io::Result;
+use std::option::Option::{None, Some};
 use std::path::{Path, PathBuf};
 use xml::attribute::OwnedAttribute;
 use xml::reader::{EventReader, XmlEvent};
 
+extern crate regex;
 extern crate xml;
 
 fn main() -> std::io::Result<()> {
@@ -68,18 +71,27 @@ impl<'a> Pupcio<'a> {
             Zipper::unzip(file_path, &extract_path).expect("Failed to unzip file");
         }
 
-        //Check epub version
+        //Get content.opf location
         let container_xml_str = format!("{}/{}", extract_str, "META-INF/container.xml");
         let mut attrs_to_find = HashMap::new();
         attrs_to_find.insert("rootfile", "full-path");
 
         let mut content_path = PathBuf::new();
         content_path.push(extract_str);
-        XmlFinder::find(
-            Path::new(&container_xml_str),
-            &attrs_to_find,
-            |attr: &OwnedAttribute| content_path.push(&attr.value),
-        )?;
+        match Regex::new("<rootfile.*full-path=\"(.*?)\".*")
+            .unwrap()
+            .captures(fs::read_to_string(container_xml_str)?.as_str())
+        {
+            Some(captured) => {
+                if captured.len() != 2 {
+                    panic!("Could't find content.opf location in container.xml")
+                }
+                content_path.push(&captured[1]);
+            }
+            None => {
+                panic!("Could't find content.opf location in container.xml")
+            }
+        }
 
         //Parse book spine
         //Parse TOC
@@ -90,50 +102,6 @@ impl<'a> Pupcio<'a> {
     }
 }
 
-struct XmlFinder;
-impl<'a> XmlFinder {
-    fn find<T>(file_path: &'a Path, attribute_names: &HashMap<&str, &str>, mut f: T) -> Result<()>
-    where
-        T: FnMut(&OwnedAttribute) -> () + Sized,
-    {
-        if file_path.is_dir() {
-            panic!("file_path is not pointing at xml file");
-        }
-        if file_path.is_dir() {
-            panic!("file_path is not pointing at xml file");
-        }
-        let file = File::open(file_path)?;
-        let parser = EventReader::new(file);
-        for e in parser {
-            match e {
-                Ok(XmlEvent::StartElement {
-                    name,
-                    namespace: _,
-                    attributes,
-                }) => {
-                    for attr in attributes {
-                        match attribute_names.get_key_value(&name.local_name.as_str()) {
-                            Some((.., value)) => {
-                                if value == &attr.name.local_name.as_str() {
-                                    f(&attr);
-                                }
-                            }
-                            _ => {}
-                        }
-                    }
-                }
-                _ => {}
-                Err(e) => {
-                    panic!(format!(
-                        "{}: {}",
-                        "Error occured while reading container.xml", e
-                    ));
-                }
-            }
-        }
-        Ok(())
-    }
-}
 struct Zipper;
 impl Zipper {
     fn unzip(file_path: &str, unzip_location: &Path) -> Result<()> {
