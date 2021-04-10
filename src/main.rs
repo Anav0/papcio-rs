@@ -93,6 +93,27 @@ impl<'a> Pupcio<'a> {
             }
         }
 
+        //Get link to TOC
+        let content_file_contents = &fs::read_to_string(content_path)?;
+        let tag = &Regex::new(r"<.*application/x-dtbncx\+xml.*/>")
+            .unwrap()
+            .captures(content_file_contents)
+            .expect("Could't find toc lick in content.opf")[0];
+
+        let toc_path = match Regex::new("<.*href=\"(.*?)\".*/>").unwrap().captures(tag) {
+            Some(captures) => captures[1].to_owned(),
+            None => {
+                panic!("Could't find toc location in content.opf")
+            }
+        };
+
+        let toc_path = Path::new(&toc_path);
+
+        if !toc_path.exists() {
+            panic!("toc.ncx file doesn't exist")
+        }
+
+        
         //Parse book spine
         //Parse TOC
         //Parse html files
