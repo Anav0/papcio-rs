@@ -34,6 +34,7 @@ fn main() -> std::io::Result<()> {
 struct Pupcio<'a> {
     TMP_FOLDER: &'a str,
     CONFIG_FOLDER: &'a str,
+    toc: Vec<Toc>,
 }
 
 impl<'a> Pupcio<'a> {
@@ -41,6 +42,7 @@ impl<'a> Pupcio<'a> {
         Self {
             TMP_FOLDER: "./tmp",
             CONFIG_FOLDER: "./config",
+            toc: vec![],
         }
     }
 
@@ -122,7 +124,7 @@ impl<'a> Pupcio<'a> {
 
         //Parse TOC
         //Get TOC nav items
-        let mut toc: Vec<Toc> = Vec::with_capacity(10); //INFO rought guess for now
+        self.toc = Vec::new();
         {
             let toc_file = File::open(toc_path_str).expect("Cannot open toc.ndx file");
             let toc_tree = Element::parse(toc_file).unwrap();
@@ -148,7 +150,7 @@ impl<'a> Pupcio<'a> {
                                 .expect("Cannot find content inside of navLabel")
                                 .attributes["src"];
 
-                            toc.push(Toc::new(src.to_owned(), text.to_owned()));
+                            self.toc.push(Toc::new(src.to_owned(), text.to_owned()));
                         }
                     }
                     _ => {}
