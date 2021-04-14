@@ -8,11 +8,11 @@ use std::io;
 use std::io::Result;
 use std::option::Option::{None, Some};
 use std::path::{Path, PathBuf};
-use xml::attribute::OwnedAttribute;
-use xml::reader::{EventReader, XmlEvent};
+use xmltree::Element;
+use xmltree::XMLNode::Element as ElementEnum;
 
 extern crate regex;
-extern crate xml;
+extern crate xmltree;
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -45,6 +45,7 @@ impl<'a> Pupcio<'a> {
     }
 
     fn load(&mut self, file_path: &str) -> Result<()> {
+        //Extract .epub file
         let epub_file_path = Path::new(file_path);
 
         if !epub_file_path.exists() {
@@ -72,15 +73,15 @@ impl<'a> Pupcio<'a> {
         }
 
         //Get content.opf location
-        let container_xml_str = format!("{}/{}", extract_str, "META-INF/container.xml");
+        let container_xml_str = format!("{}/{}", &extract_str, "META-INF/container.xml");
         let mut attrs_to_find = HashMap::new();
         attrs_to_find.insert("rootfile", "full-path");
 
         let mut content_path = PathBuf::new();
-        content_path.push(extract_str);
+        content_path.push(&extract_str);
         match Regex::new("<rootfile.*full-path=\"(.*?)\".*")
             .unwrap()
-            .captures(fs::read_to_string(container_xml_str)?.as_str())
+            .captures(fs::read_to_string(&container_xml_str)?.as_str())
         {
             Some(captured) => {
                 if captured.len() != 2 {
@@ -94,7 +95,7 @@ impl<'a> Pupcio<'a> {
         }
 
         //Get link to TOC
-        let content_file_contents = &fs::read_to_string(content_path)?;
+        let content_file_contents = &fs::read_to_string(&content_path)?;
         let tag = &Regex::new(r"<.*application/x-dtbncx\+xml.*/>")
             .unwrap()
             .captures(content_file_contents)
@@ -107,19 +108,69 @@ impl<'a> Pupcio<'a> {
             }
         };
 
-        let toc_path = Path::new(&toc_path);
+        let content_path_ancestors: Vec<_> = content_path.ancestors().collect();
+        let toc_path_str = format!(
+            "{}/{}",
+            content_path_ancestors[1].to_str().unwrap(),
+            &toc_path
+        );
+        let toc_path = Path::new(&toc_path_str);
 
         if !toc_path.exists() {
             panic!("toc.ncx file doesn't exist")
         }
 
-        
-        //Parse book spine
         //Parse TOC
+        //Get TOC nav items
+        let mut toc: Vec<Toc> = Vec::with_capacity(10); //INFO rought guess for now
+        {
+            let toc_file = File::open(toc_path_str).expect("Cannot open toc.ndx file");
+            let toc_tree = Element::parse(toc_file).unwrap();
+            for el in &toc_tree
+                .get_child("navMap")
+                .expect("Couldn't find navMap inside of toc.ndx")
+                .children
+            {
+                match el {
+                    ElementEnum(element) => {
+                        if element.name == "navPoint" {
+                            let text = element
+                                .get_child("navLabel")
+                                .expect("Cannot find navLabel inside of one of navPoints")
+                                .get_child("text")
+                                .expect("Cannot find text inside of one of navLabel")
+                                .children[0]
+                                .as_text()
+                                .expect("text tag inside of navLabel do not have content specifed");
+
+                            let src = &element
+                                .get_child("content")
+                                .expect("Cannot find content inside of navLabel")
+                                .attributes["src"];
+
+                            toc.push(Toc::new(src.to_owned(), text.to_owned()));
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         //Parse html files
         //Display parsed HTML via stdout
         //TODO: Think about saving/loading epub state
         Ok(())
+    }
+}
+
+#[derive(Debug)]
+struct Toc {
+    src: String,
+    text: String,
+}
+impl Toc {
+    fn new(src: String, text: String) -> Self {
+        Self { src, text }
     }
 }
 
