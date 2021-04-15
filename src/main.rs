@@ -1,13 +1,28 @@
 #![allow(dead_code)]
 use regex::Regex;
 use std::collections::HashMap;
+use std::convert::TryInto;
 use std::env;
 use std::fs;
 use std::fs::File;
 use std::io;
+use std::io::stdin;
+use std::io::stdout;
+use std::io::BufRead;
+use std::io::Read;
 use std::io::Result;
+use std::io::Stdin;
+use std::io::Stdout;
+use std::io::Write;
 use std::option::Option::{None, Some};
 use std::path::{Path, PathBuf};
+use std::{thread, time};
+use termion::color::Color;
+use termion::cursor;
+use termion::event::Key;
+use termion::input::TermRead;
+use termion::raw::IntoRawMode;
+use termion::{clear, color, style};
 use xmltree::Element;
 use xmltree::XMLNode::Element as ElementEnum;
 
@@ -35,6 +50,8 @@ struct Pupcio<'a> {
     TMP_FOLDER: &'a str,
     CONFIG_FOLDER: &'a str,
     toc: Vec<Toc>,
+    selected_option: usize,
+    terminal_width: (u16, u16),
 }
 
 impl<'a> Pupcio<'a> {
@@ -43,6 +60,8 @@ impl<'a> Pupcio<'a> {
             TMP_FOLDER: "./tmp",
             CONFIG_FOLDER: "./config",
             toc: vec![],
+            selected_option: 0,
+            terminal_width: termion::terminal_size().unwrap(),
         }
     }
 
@@ -158,13 +177,86 @@ impl<'a> Pupcio<'a> {
             }
         }
 
+        {
+            self.print_toc();
+            let stdin = stdin();
+            let mut stdout = stdout().into_raw_mode().unwrap();
+            for c in stdin.keys() {
+                match c.unwrap() {
+                    Key::Char('w') => self.move_selection(MoveDirection::Up),
+                    Key::Char('s') => self.move_selection(MoveDirection::Down),
+                    Key::Char('q') => break,
+                    _ => {}
+                }
+            }
+            write!(stdout, "{}{}", cursor::Goto(1, 1), clear::All);
+        }
         //Parse html files
         //Display parsed HTML via stdout
         //TODO: Think about saving/loading epub state
         Ok(())
     }
-}
 
+    fn move_selection(&mut self, direction: MoveDirection) {
+        match direction {
+            MoveDirection::Up => {
+                if self.selected_option != 0 {
+                    self.selected_option -= 1
+                }
+            }
+            MoveDirection::Down => {
+                if self.selected_option != self.toc.len() - 1 {
+                    self.selected_option += 1
+                }
+            }
+        }
+        self.print_toc();
+    }
+
+    fn update_dimentions(&mut self) {
+        self.terminal_width = termion::terminal_size().unwrap();
+    }
+
+    fn print_toc(&self) {
+        let mut stdout = stdout().into_raw_mode().unwrap();
+        write!(
+            stdout,
+            "{}{}{}",
+            clear::All,
+            cursor::Goto(1, 1),
+            cursor::Hide
+        );
+        for (i, e) in self.toc.iter().enumerate() {
+            let start_cell = (usize::from(self.terminal_width.0) / 2) - (e.text.len() / 2);
+            if i == self.selected_option {
+                write!(
+                    stdout,
+                    "{}{}{}{}{}",
+                    cursor::Goto(start_cell.try_into().unwrap(), (i + 2).try_into().unwrap()),
+                    color::Bg(color::White),
+                    style::Bold,
+                    e.text,
+                    style::Reset,
+                )
+                .unwrap();
+            } else {
+                write!(
+                    stdout,
+                    "{}{}{}",
+                    cursor::Goto(start_cell.try_into().unwrap(), (i + 2).try_into().unwrap()),
+                    e.text,
+                    style::Reset,
+                )
+                .unwrap();
+            }
+        }
+        stdout.flush().unwrap();
+    }
+}
+enum MoveDirection {
+    Up,
+    Down,
+}
 #[derive(Debug)]
 struct Toc {
     src: String,
