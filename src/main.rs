@@ -51,7 +51,7 @@ struct Pupcio<'a> {
     CONFIG_FOLDER: &'a str,
     toc: Vec<Toc>,
     selected_option: usize,
-    terminal_width: (u16, u16),
+    terminal_size: (u16, u16),
 }
 
 impl<'a> Pupcio<'a> {
@@ -61,7 +61,7 @@ impl<'a> Pupcio<'a> {
             CONFIG_FOLDER: "./config",
             toc: vec![],
             selected_option: 0,
-            terminal_width: termion::terminal_size().unwrap(),
+            terminal_size: termion::terminal_size().unwrap(),
         }
     }
 
@@ -179,6 +179,7 @@ impl<'a> Pupcio<'a> {
 
         {
             self.print_toc();
+            self.update_dimentions();
             let stdin = stdin();
             let mut stdout = stdout().into_raw_mode().unwrap();
             for c in stdin.keys() {
@@ -189,7 +190,13 @@ impl<'a> Pupcio<'a> {
                     _ => {}
                 }
             }
-            write!(stdout, "{}{}", cursor::Goto(1, 1), clear::All);
+            write!(
+                stdout,
+                "{}{}{}",
+                cursor::Goto(1, 1),
+                clear::All,
+                cursor::Show
+            );
         }
         //Parse html files
         //Display parsed HTML via stdout
@@ -214,7 +221,7 @@ impl<'a> Pupcio<'a> {
     }
 
     fn update_dimentions(&mut self) {
-        self.terminal_width = termion::terminal_size().unwrap();
+        self.terminal_size = termion::terminal_size().unwrap();
     }
 
     fn print_toc(&self) {
@@ -227,7 +234,7 @@ impl<'a> Pupcio<'a> {
             cursor::Hide
         );
         for (i, e) in self.toc.iter().enumerate() {
-            let start_cell = (usize::from(self.terminal_width.0) / 2) - (e.text.len() / 2);
+            let start_cell = (usize::from(self.terminal_size.0) / 2) - (e.text.len() / 2);
             if i == self.selected_option {
                 write!(
                     stdout,
@@ -267,7 +274,6 @@ impl Toc {
         Self { src, text }
     }
 }
-
 struct Zipper;
 impl Zipper {
     fn unzip(file_path: &str, unzip_location: &Path) -> Result<()> {
