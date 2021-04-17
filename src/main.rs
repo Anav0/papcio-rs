@@ -9,6 +9,8 @@ use std::io;
 use std::io::stdin;
 use std::io::stdout;
 use std::io::BufRead;
+use std::io::BufReader;
+use std::io::Lines;
 use std::io::Read;
 use std::io::Result;
 use std::io::Stdin;
@@ -39,14 +41,16 @@ fn main() -> std::io::Result<()> {
     let file_path: &String = &args[1];
     println!("{:?}", file_path);
 
-    let mut pupcio = Pupcio::new();
+    let mut papcio = Papcio::new();
 
-    pupcio.load(file_path)?;
+    papcio.load(file_path)?;
+
+    papcio.run();
 
     Ok(())
 }
 
-struct Pupcio<'a> {
+struct Papcio<'a> {
     TMP_FOLDER: &'a str,
     CONFIG_FOLDER: &'a str,
     toc: Vec<Toc>,
@@ -54,14 +58,53 @@ struct Pupcio<'a> {
     terminal_size: (u16, u16),
 }
 
-impl<'a> Pupcio<'a> {
+impl<'a> Papcio<'a> {
     fn new() -> Self {
-        Self {
+        Papcio {
             TMP_FOLDER: "./tmp",
             CONFIG_FOLDER: "./config",
             toc: vec![],
             selected_option: 0,
             terminal_size: termion::terminal_size().unwrap(),
+        }
+    }
+
+    fn run(&mut self) {
+        self.read_from(&self.toc[3], HtmlReadFrom::Line(1));
+        todo!();
+        self.update_dimentions();
+        self.print_toc();
+        let stdin = stdin();
+        let mut stdout = stdout().into_raw_mode().unwrap();
+        for c in stdin.keys() {
+            match c.unwrap() {
+                Key::Char('w') => self.move_selection(MoveDirection::Up),
+                Key::Char('s') => self.move_selection(MoveDirection::Down),
+                Key::Char('e') => {
+                    let selected_chapter = &self.toc[self.selected_option];
+                    self.read_from(selected_chapter, HtmlReadFrom::Line(1));
+                }
+                Key::Char('q') => break,
+                _ => {}
+            }
+            self.print_toc();
+        }
+        write!(
+            stdout,
+            "{}{}{}",
+            cursor::Goto(1, 1),
+            clear::All,
+            cursor::Show
+        );
+    }
+
+    fn read_from(&self, toc: &Toc, from: HtmlReadFrom) {
+        println!("{}", toc.src);
+
+        let paragraph_iterator = HtmlParagraphIterator::new(&toc.src, from);
+
+        for paragraph in paragraph_iterator {
+            //println!("{}", paragraph);
         }
     }
 
@@ -169,7 +212,13 @@ impl<'a> Pupcio<'a> {
                                 .expect("Cannot find content inside of navLabel")
                                 .attributes["src"];
 
-                            self.toc.push(Toc::new(src.to_owned(), text.to_owned()));
+                            let split: Vec<&str> = src.split("#").collect();
+
+                            self.toc.push(Toc::new(
+                                format!("{}/{}", extract_str, split[0]),
+                                split[1].to_owned(),
+                                text.to_owned(),
+                            ));
                         }
                     }
                     _ => {}
@@ -177,27 +226,6 @@ impl<'a> Pupcio<'a> {
             }
         }
 
-        {
-            self.print_toc();
-            self.update_dimentions();
-            let stdin = stdin();
-            let mut stdout = stdout().into_raw_mode().unwrap();
-            for c in stdin.keys() {
-                match c.unwrap() {
-                    Key::Char('w') => self.move_selection(MoveDirection::Up),
-                    Key::Char('s') => self.move_selection(MoveDirection::Down),
-                    Key::Char('q') => break,
-                    _ => {}
-                }
-            }
-            write!(
-                stdout,
-                "{}{}{}",
-                cursor::Goto(1, 1),
-                clear::All,
-                cursor::Show
-            );
-        }
         //Parse html files
         //Display parsed HTML via stdout
         //TODO: Think about saving/loading epub state
@@ -217,7 +245,6 @@ impl<'a> Pupcio<'a> {
                 }
             }
         }
-        self.print_toc();
     }
 
     fn update_dimentions(&mut self) {
@@ -260,6 +287,103 @@ impl<'a> Pupcio<'a> {
         stdout.flush().unwrap();
     }
 }
+
+struct HtmlParagraphIterator {
+    lines: Lines<BufReader<File>>,
+    current_line: usize,
+}
+impl HtmlParagraphIterator {
+    fn new(filepath: &str, from: HtmlReadFrom) -> Self {
+        let html_path = Path::new(filepath);
+
+        if !html_path.exists() {
+            panic!("File at: '{}' do not exists", &filepath);
+        }
+
+        let html_file =
+            File::open(html_path).expect(&format!("File at: '{}' cannot be open", &filepath));
+
+        let mut lines = BufReader::new(html_file).lines();
+        let mut skiped = 0;
+
+        let current_line = match from {
+            HtmlReadFrom::Line(line) => {
+                loop {
+                    skiped += 1;
+
+                    lines
+                        .next()
+                        .expect(&format!(
+                            "Cannot get next '{}' line in file: '{}'",
+                            skiped, filepath
+                        ))
+                        .unwrap();
+                    if skiped + 1 >= line {
+                        break;
+                    }
+                }
+                skiped
+            }
+            HtmlReadFrom::Marker(marker) => {
+                let marker_re = Regex::new(&format!("^<p.*href=\"{}\".*</p>$", marker)).unwrap();
+                loop {
+                    skiped += 1;
+
+                    let line = lines
+                        .next()
+                        .expect(&format!(
+                            "Cannot get next '{}' line in file: '{}'. Marker: '{}' not found",
+                            skiped, filepath, marker
+                        ))
+                        .unwrap();
+
+                    let matches = match marker_re.captures(&line) {
+                        Some(matches) => matches,
+                        None => continue,
+                    };
+
+                    if matches.len() > 1 {
+                        panic!(format!(
+                            "More than one marker: '{}' found i file: '{}",
+                            marker, filepath
+                        ))
+                    }
+
+                    if matches.len() == 1 {
+                        break;
+                    }
+                }
+                skiped
+            }
+        };
+
+        println!("{}", skiped);
+        Self {
+            lines,
+            current_line,
+        }
+    }
+}
+impl Iterator for HtmlParagraphIterator {
+    type Item = String;
+    fn next(&mut self) -> Option<<Self as std::iter::Iterator>::Item> {
+        match self.lines.next() {
+            Some(line) => {
+                self.current_line += 1;
+                return Some(line.expect(&format!(
+                    "Line number: '{}' cannot be read",
+                    self.current_line - 1
+                )));
+            }
+            None => None,
+        }
+    }
+}
+
+enum HtmlReadFrom {
+    Line(usize),
+    Marker(String),
+}
 enum MoveDirection {
     Up,
     Down,
@@ -267,11 +391,12 @@ enum MoveDirection {
 #[derive(Debug)]
 struct Toc {
     src: String,
+    marker: String,
     text: String,
 }
 impl Toc {
-    fn new(src: String, text: String) -> Self {
-        Self { src, text }
+    fn new(src: String, marker: String, text: String) -> Self {
+        Self { src, marker, text }
     }
 }
 struct Zipper;
