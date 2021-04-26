@@ -16,6 +16,7 @@ use termion::cursor;
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
+use termion::screen::AlternateScreen;
 use termion::{clear, color, style};
 use xmltree::Element;
 use xmltree::XMLNode::Element as ElementEnum;
@@ -39,28 +40,9 @@ impl<'a> Papcio<'a> {
         }
     }
 
-    pub fn run(&mut self) {
-        self.read_from(&self.toc[3], HtmlReadFrom::Line(1));
-        todo!();
-        self.update_dimentions();
-        self.print_toc();
-        let stdin = stdin();
-        let mut stdout = stdout().into_raw_mode().unwrap();
-        for c in stdin.keys() {
-            match c.unwrap() {
-                Key::Char('w') => self.move_selection(MoveDirection::Up),
-                Key::Char('s') => self.move_selection(MoveDirection::Down),
-                Key::Char('e') => {
-                    let selected_chapter = &self.toc[self.selected_option];
-                    self.read_from(selected_chapter, HtmlReadFrom::Line(1));
-                }
-                Key::Char('q') => break,
-                _ => {}
-            }
-            self.print_toc();
-        }
+    fn clear_screen<W: Write>(screen: &mut W) {
         write!(
-            stdout,
+            screen,
             "{}{}{}",
             cursor::Goto(1, 1),
             clear::All,
@@ -68,14 +50,45 @@ impl<'a> Papcio<'a> {
         );
     }
 
-    pub fn read_from(&self, toc: &Toc, from: HtmlReadFrom) {
-        println!("{}", toc.src);
+    pub fn run(&mut self) {
+        let mut toc_screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
+        let mut content_screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
+        self.update_dimentions();
+        self.print_toc(&mut toc_screen);
+        let stdin = stdin();
+        for c in stdin.keys() {
+            match c.unwrap() {
+                Key::Char('w') => {
+                    self.move_selection(MoveDirection::Up);
+                    self.print_toc(&mut toc_screen);
+                }
+                Key::Char('s') => {
+                    self.move_selection(MoveDirection::Down);
+                    self.print_toc(&mut toc_screen);
+                }
+                Key::Char('e') => {
+                    Papcio::clear_screen(&mut toc_screen);
+                    Papcio::clear_screen(&mut content_screen);
+                    let selected_chapter = &self.toc[self.selected_option];
+                    self.read_from(selected_chapter, HtmlReadFrom::Line(1), &mut content_screen);
+                }
+                Key::Char('q') => break,
+                _ => {}
+            }
+        }
+
+        Papcio::clear_screen(&mut toc_screen);
+        Papcio::clear_screen(&mut content_screen);
+    }
+
+    pub fn read_from<W: Write>(&self, toc: &Toc, from: HtmlReadFrom, screen: &mut W) {
+        screen.flush().unwrap();
 
         let styler = TagStyler::new();
         let paragraph_iterator = HtmlParagraphIterator::new(&toc.src, from, &styler);
 
         for paragraph in paragraph_iterator {
-            println!("{}", paragraph);
+            write!(screen, "{}", paragraph);
         }
     }
 
@@ -246,10 +259,9 @@ impl<'a> Papcio<'a> {
         self.terminal_size = termion::terminal_size().unwrap();
     }
 
-    pub fn print_toc(&self) {
-        let mut stdout = stdout().into_raw_mode().unwrap();
+    pub fn print_toc<W: Write>(&self, screen: &mut W) {
         write!(
-            stdout,
+            screen,
             "{}{}{}",
             clear::All,
             cursor::Goto(1, 1),
@@ -259,7 +271,7 @@ impl<'a> Papcio<'a> {
             let start_cell = (usize::from(self.terminal_size.0) / 2) - (e.text.len() / 2);
             if i == self.selected_option {
                 write!(
-                    stdout,
+                    screen,
                     "{}{}{}{}{}",
                     cursor::Goto(start_cell.try_into().unwrap(), (i + 2).try_into().unwrap()),
                     color::Bg(color::White),
@@ -270,7 +282,7 @@ impl<'a> Papcio<'a> {
                 .unwrap();
             } else {
                 write!(
-                    stdout,
+                    screen,
                     "{}{}{}",
                     cursor::Goto(start_cell.try_into().unwrap(), (i + 2).try_into().unwrap()),
                     e.text,
@@ -279,6 +291,6 @@ impl<'a> Papcio<'a> {
                 .unwrap();
             }
         }
-        stdout.flush().unwrap();
+        screen.flush().unwrap();
     }
 }
