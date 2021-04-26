@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 use regex::Regex;
+use regex::RegexSet;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::env;
@@ -101,10 +102,11 @@ impl<'a> Papcio<'a> {
     fn read_from(&self, toc: &Toc, from: HtmlReadFrom) {
         println!("{}", toc.src);
 
-        let paragraph_iterator = HtmlParagraphIterator::new(&toc.src, from);
+        let styler = TagStyler::new();
+        let paragraph_iterator = HtmlParagraphIterator::new(&toc.src, from, &styler);
 
         for paragraph in paragraph_iterator {
-            //println!("{}", paragraph);
+            println!("{}", paragraph);
         }
     }
 
@@ -188,8 +190,14 @@ impl<'a> Papcio<'a> {
         //Get TOC nav items
         self.toc = Vec::new();
         {
-            let toc_file = File::open(toc_path_str).expect("Cannot open toc.ndx file");
+            let toc_file = File::open(&toc_path_str).expect("Cannot open toc.ndx file");
             let toc_tree = Element::parse(toc_file).unwrap();
+
+            let mut up_to_toc = PathBuf::from(toc_path);
+            up_to_toc.pop();
+
+            let up_to_toc = up_to_toc.to_str().unwrap();
+
             for el in &toc_tree
                 .get_child("navMap")
                 .expect("Couldn't find navMap inside of toc.ndx")
@@ -214,11 +222,22 @@ impl<'a> Papcio<'a> {
 
                             let split: Vec<&str> = src.split("#").collect();
 
-                            self.toc.push(Toc::new(
-                                format!("{}/{}", extract_str, split[0]),
-                                split[1].to_owned(),
-                                text.to_owned(),
-                            ));
+                            match split.len() {
+                                2 => {
+                                    self.toc.push(Toc::new(
+                                        format!("{}/{}", up_to_toc, split[0]),
+                                        split[1].to_owned(),
+                                        text.to_owned(),
+                                    ));
+                                }
+                                _ => {
+                                    self.toc.push(Toc::new(
+                                        format!("{}/{}", up_to_toc, split[0]),
+                                        String::from(""),
+                                        text.to_owned(),
+                                    ));
+                                }
+                            }
                         }
                     }
                     _ => {}
@@ -288,12 +307,14 @@ impl<'a> Papcio<'a> {
     }
 }
 
-struct HtmlParagraphIterator {
+struct HtmlParagraphIterator<'a> {
     lines: Lines<BufReader<File>>,
-    current_line: usize,
+    styler: &'a TagStyler,
+    tags: [&'a str; 18],
+    regexes: Vec<String>,
 }
-impl HtmlParagraphIterator {
-    fn new(filepath: &str, from: HtmlReadFrom) -> Self {
+impl<'a> HtmlParagraphIterator<'a> {
+    fn new(filepath: &str, from: HtmlReadFrom, styler: &'a TagStyler) -> Self {
         let html_path = Path::new(filepath);
 
         if !html_path.exists() {
@@ -306,7 +327,7 @@ impl HtmlParagraphIterator {
         let mut lines = BufReader::new(html_file).lines();
         let mut skiped = 0;
 
-        let current_line = match from {
+        match from {
             HtmlReadFrom::Line(line) => {
                 loop {
                     skiped += 1;
@@ -357,26 +378,128 @@ impl HtmlParagraphIterator {
             }
         };
 
-        println!("{}", skiped);
+        let tags = [
+            "p",
+            "h1",
+            "h2",
+            "h3",
+            "h4",
+            "h5",
+            "h6",
+            "div",
+            "a",
+            "i",
+            "li",
+            "em",
+            "q",
+            "dt",
+            "dd",
+            "blockquote",
+            "b",
+            "span",
+        ];
+        let mut regexes = Vec::with_capacity(tags.len());
+
+        for elem in tags.iter() {
+            regexes.push(format!("<{}.*?>(.*?)</{}>", elem, elem));
+        }
+
         Self {
             lines,
-            current_line,
+            styler,
+            regexes,
+            tags,
         }
     }
 }
-impl Iterator for HtmlParagraphIterator {
+impl Iterator for HtmlParagraphIterator<'_> {
     type Item = String;
     fn next(&mut self) -> Option<<Self as std::iter::Iterator>::Item> {
-        match self.lines.next() {
-            Some(line) => {
-                self.current_line += 1;
-                return Some(line.expect(&format!(
-                    "Line number: '{}' cannot be read",
-                    self.current_line - 1
-                )));
+        let regex_set = RegexSet::new(self.regexes.iter()).unwrap();
+
+        loop {
+            let line = match self.lines.next() {
+                Some(line) => line.unwrap(),
+                None => return None,
+            };
+
+            let mut tag_content = line.to_owned();
+            let mut output = line.to_owned();
+            let mut prev_tag = "";
+            let mut i = 0;
+            loop {
+                let total_matches = regex_set
+                    .matches(&tag_content)
+                    .into_iter()
+                    .collect::<Vec<_>>();
+
+                if total_matches.len() == 0 {
+                    if i == 0 {
+                        tag_content = String::new();
+                    }
+                    break;
+                }
+                let regex = &self.regexes[total_matches[0]];
+                let tag = &self.tags[total_matches[0]];
+
+                let what_matched = Regex::new(&regex).unwrap().captures(&tag_content).unwrap();
+
+                if what_matched.len() > 2 {
+                    panic!("More matched!")
+                }
+
+                let whole = what_matched.get(0)?;
+                let inner = what_matched.get(1)?.as_str();
+                let mut additional_preappend = "";
+                if prev_tag != "li" && *tag == "li" {
+                    additional_preappend = "\n\r"
+                }
+
+                let styled = &self.styler.style(inner, tag, additional_preappend);
+
+                output.replace_range(whole.range(), styled);
+
+                tag_content = output.clone();
+                prev_tag = tag;
+                i += 1;
             }
-            None => None,
+            tag_content = tag_content.replace(&self.styler.new_line, "\n\r");
+            return Some(tag_content);
         }
+    }
+}
+
+struct TagStyler {
+    new_line: String,
+}
+impl TagStyler {
+    fn new() -> Self {
+        TagStyler {
+            new_line: String::from("new_line"),
+        }
+    }
+    fn style(&self, text: &str, tag: &str, prepend: &str) -> String {
+        let style = match tag {
+            "a" => format!("{}{}{}", color::Fg(color::Blue), style::Underline, text),
+            "p" | "div" => format!("{}{}", text, self.new_line),
+            "h1" | "h2" | "h3" | "h4" | "h6" | "b" => {
+                format!("{}{}{}", style::Bold, text, self.new_line)
+            }
+            "em" => format!("{}{}{}", style::Bold, style::Underline, text),
+            "li" => format!("• {}{}{}", color::Fg(color::Yellow), text, self.new_line),
+            "dt" | "dd" | "blockquote" | "q" => {
+                format!("{}{}", color::Fg(color::Green), text)
+            }
+            "span" => format!(
+                "{}{}{}{}",
+                color::Bg(color::White),
+                color::Fg(color::Black),
+                style::Bold,
+                text
+            ),
+            _ => String::new(),
+        };
+        format!("{}{}{}", prepend, style, style::Reset)
     }
 }
 
