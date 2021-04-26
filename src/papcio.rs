@@ -1,5 +1,6 @@
 use crate::html::HtmlParagraphIterator;
 use crate::html::HtmlReadFrom;
+use crate::misc::ReaderState;
 use crate::misc::{MoveDirection, Toc, Zipper};
 use crate::styler::TagStyler;
 use regex::Regex;
@@ -27,6 +28,7 @@ pub struct Papcio<'a> {
     toc: Vec<Toc>,
     selected_option: usize,
     terminal_size: (u16, u16),
+    state: ReaderState,
 }
 
 impl<'a> Papcio<'a> {
@@ -37,10 +39,11 @@ impl<'a> Papcio<'a> {
             toc: vec![],
             selected_option: 0,
             terminal_size: termion::terminal_size().unwrap(),
+            state: ReaderState::TocShown,
         }
     }
 
-    fn clear_screen<W: Write>(screen: &mut W) {
+    fn clear_screen<W: Write>(&self, screen: &mut W) {
         write!(
             screen,
             "{}{}{}",
@@ -50,49 +53,7 @@ impl<'a> Papcio<'a> {
         );
     }
 
-    pub fn run(&mut self) {
-        let mut toc_screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
-        let mut content_screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
-        self.update_dimentions();
-        self.print_toc(&mut toc_screen);
-        let stdin = stdin();
-        for c in stdin.keys() {
-            match c.unwrap() {
-                Key::Char('w') => {
-                    self.move_selection(MoveDirection::Up);
-                    self.print_toc(&mut toc_screen);
-                }
-                Key::Char('s') => {
-                    self.move_selection(MoveDirection::Down);
-                    self.print_toc(&mut toc_screen);
-                }
-                Key::Char('e') => {
-                    Papcio::clear_screen(&mut toc_screen);
-                    Papcio::clear_screen(&mut content_screen);
-                    let selected_chapter = &self.toc[self.selected_option];
-                    self.read_from(selected_chapter, HtmlReadFrom::Line(1), &mut content_screen);
-                }
-                Key::Char('q') => break,
-                _ => {}
-            }
-        }
-
-        Papcio::clear_screen(&mut toc_screen);
-        Papcio::clear_screen(&mut content_screen);
-    }
-
-    pub fn read_from<W: Write>(&self, toc: &Toc, from: HtmlReadFrom, screen: &mut W) {
-        screen.flush().unwrap();
-
-        let styler = TagStyler::new();
-        let paragraph_iterator = HtmlParagraphIterator::new(&toc.src, from, &styler);
-
-        for paragraph in paragraph_iterator {
-            write!(screen, "{}", paragraph);
-        }
-    }
-
-    pub fn load(&mut self, file_path: &str) -> Result<(), &str> {
+    fn initialize(&mut self, file_path: &str) -> Result<(), &str> {
         //Extract .epub file
         let epub_file_path = Path::new(file_path);
 
@@ -238,6 +199,84 @@ impl<'a> Papcio<'a> {
         //Display parsed HTML via stdout
         //TODO: Think about saving/loading epub state
         Ok(())
+    }
+
+    fn listen(&mut self) {
+        let mut toc_screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
+        let mut content_screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
+        self.update_dimentions();
+        self.print_toc(&mut toc_screen);
+        let stdin = stdin();
+        for c in stdin.keys() {
+            match c.unwrap() {
+                Key::Char('w') => {
+                    match self.state {
+                        ReaderState::TocShown => {
+                            self.move_selection(MoveDirection::Up);
+                            self.print_toc(&mut toc_screen);
+                        }
+                        ReaderState::ContentShown => {
+                            //TODO: scroll content
+                        }
+                    }
+                }
+                Key::Char('s') => {
+                    match self.state {
+                        ReaderState::TocShown => {
+                            self.move_selection(MoveDirection::Down);
+                            self.print_toc(&mut toc_screen);
+                        }
+                        ReaderState::ContentShown => {
+                            //TODO: scroll content
+                        }
+                    }
+                }
+                Key::Char('e') => match self.state {
+                    ReaderState::TocShown => {
+                        self.state = ReaderState::ContentShown;
+                        self.clear_screen(&mut toc_screen);
+                        self.clear_screen(&mut content_screen);
+                        let selected_chapter = &self.toc[self.selected_option];
+                        self.read_from(
+                            selected_chapter,
+                            HtmlReadFrom::Line(1),
+                            &mut content_screen,
+                        );
+                    }
+                    _ => {}
+                },
+                Key::Char('q') => match self.state {
+                    ReaderState::ContentShown => {
+                        self.clear_screen(&mut content_screen);
+                        self.state = ReaderState::TocShown;
+                        self.print_toc(&mut toc_screen);
+                    }
+                    _ => {
+                        self.clear_screen(&mut content_screen);
+                        self.clear_screen(&mut toc_screen);
+                        break;
+                    }
+                },
+                _ => {}
+            }
+        }
+    }
+
+    pub fn run(&mut self, file_path: &str) {
+        self.initialize(file_path)
+            .expect("Failed to initialize Papcio");
+        self.listen();
+    }
+
+    pub fn read_from<W: Write>(&self, toc: &Toc, from: HtmlReadFrom, screen: &mut W) {
+        screen.flush().unwrap();
+
+        let styler = TagStyler::new();
+        let paragraph_iterator = HtmlParagraphIterator::new(&toc.src, from, &styler);
+
+        for paragraph in paragraph_iterator {
+            write!(screen, "{}", paragraph);
+        }
     }
 
     pub fn move_selection(&mut self, direction: MoveDirection) {

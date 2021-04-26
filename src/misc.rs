@@ -4,6 +4,11 @@ use std::option::Option::{None, Some};
 use std::path::{Path, PathBuf};
 use std::result::Result;
 
+pub enum ReaderState {
+    TocShown,
+    ContentShown,
+}
+
 pub enum MoveDirection {
     Up,
     Down,

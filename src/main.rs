@@ -23,9 +23,7 @@ fn main() -> std::io::Result<()> {
 
     let mut papcio = Papcio::new();
 
-    papcio.load(file_path).expect("Problem loading file...");
-
-    papcio.run();
+    papcio.run(file_path);
 
     Ok(())
 }
