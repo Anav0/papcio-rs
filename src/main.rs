@@ -1,15 +1,12 @@
 #![allow(dead_code)]
 use std::env;
 
-extern crate regex;
-extern crate xmltree;
-
 mod html;
 mod misc;
-mod papcio;
+mod reader;
 mod styler;
 
-use papcio::Papcio;
+use reader::EpubReader;
 
 fn main() -> std::io::Result<()> {
     let args: Vec<String> = env::args().collect();
@@ -21,7 +18,7 @@ fn main() -> std::io::Result<()> {
     let file_path: &String = &args[1];
     println!("{:?}", file_path);
 
-    let mut papcio = Papcio::new();
+    let mut papcio = EpubReader::new();
 
     papcio.run(file_path);
 

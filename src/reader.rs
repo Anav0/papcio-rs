@@ -1,7 +1,6 @@
-use crate::html::HtmlParagraphIterator;
-use crate::html::HtmlReadFrom;
+use crate::html::HtmlToLine;
 use crate::misc::ReaderState;
-use crate::misc::{MoveDirection, Toc, Zipper};
+use crate::misc::{Toc, Zipper};
 use crate::styler::TagStyler;
 use regex::Regex;
 use std::collections::HashMap;
@@ -22,28 +21,41 @@ use termion::{clear, color, style};
 use xmltree::Element;
 use xmltree::XMLNode::Element as ElementEnum;
 
-pub struct Papcio<'a> {
+pub struct EpubReader<'a> {
     TMP_FOLDER: &'a str,
     CONFIG_FOLDER: &'a str,
     toc: Vec<Toc>,
-    selected_option: usize,
-    terminal_size: (u16, u16),
+    terminal_width: u16,
+    terminal_height: u16,
     state: ReaderState,
+    margin_x: u16,
+    margin_y: u16,
+    loaded_lines: Vec<String>,
 }
 
-impl<'a> Papcio<'a> {
+impl<'a> EpubReader<'a> {
     pub fn new() -> Self {
-        Papcio {
+        let terminal_size = termion::terminal_size().unwrap();
+
+        EpubReader {
+            loaded_lines: vec![],
             TMP_FOLDER: "./tmp",
             CONFIG_FOLDER: "./config",
             toc: vec![],
-            selected_option: 0,
-            terminal_size: termion::terminal_size().unwrap(),
+            terminal_height: terminal_size.1,
+            terminal_width: terminal_size.0,
             state: ReaderState::TocShown,
+            margin_x: 8,
+            margin_y: 5,
         }
     }
 
     fn clear_screen<W: Write>(&self, screen: &mut W) {
+        write!(screen, "{}{}", cursor::Goto(1, 1), clear::All);
+        screen.flush().unwrap();
+    }
+
+    fn clean<W: Write>(&self, screen: &mut W) {
         write!(
             screen,
             "{}{}{}",
@@ -51,6 +63,7 @@ impl<'a> Papcio<'a> {
             clear::All,
             cursor::Show
         );
+        screen.flush().unwrap();
     }
 
     fn initialize(&mut self, file_path: &str) -> Result<(), &str> {
@@ -205,43 +218,74 @@ impl<'a> Papcio<'a> {
         let mut toc_screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
         let mut content_screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
         self.update_dimentions();
-        self.print_toc(&mut toc_screen);
         let stdin = stdin();
+        let mut selected_option = 0;
+        let mut first_line: u16 = 0;
+        self.print_toc(&mut toc_screen, selected_option);
+        let MIN_WIDTH = 80;
+        let styler = TagStyler::new();
+
         for c in stdin.keys() {
             match c.unwrap() {
-                Key::Char('w') => {
-                    match self.state {
-                        ReaderState::TocShown => {
-                            self.move_selection(MoveDirection::Up);
-                            self.print_toc(&mut toc_screen);
+                Key::Char('w') => match self.state {
+                    ReaderState::TocShown => {
+                        if selected_option != 0 {
+                            selected_option -= 1
                         }
-                        ReaderState::ContentShown => {
-                            //TODO: scroll content
-                        }
+                        self.print_toc(&mut toc_screen, selected_option);
                     }
-                }
-                Key::Char('s') => {
-                    match self.state {
-                        ReaderState::TocShown => {
-                            self.move_selection(MoveDirection::Down);
-                            self.print_toc(&mut toc_screen);
+                    _ => {}
+                },
+                Key::Char('s') => match self.state {
+                    ReaderState::TocShown => {
+                        if selected_option != self.toc.len() - 1 {
+                            selected_option += 1
                         }
-                        ReaderState::ContentShown => {
-                            //TODO: scroll content
-                        }
+                        self.print_toc(&mut toc_screen, selected_option);
                     }
-                }
+                    _ => {}
+                },
+                Key::Char('a') => match self.state {
+                    ReaderState::ContentShown => {
+                        if first_line <= 0 {
+                            continue;
+                        }
+                        first_line -= self.terminal_height - self.margin_y * 2;
+                        self.clear_screen(&mut content_screen);
+                        self.print_section(first_line, &mut content_screen);
+                    }
+                    _ => {}
+                },
+                Key::Char('d') => match self.state {
+                    ReaderState::ContentShown => {
+                        if usize::from(self.terminal_height) >= self.loaded_lines.len() {
+                            continue; //We already printed everything in one go
+                        }
+
+                        if usize::from(first_line + self.terminal_height - self.margin_y)
+                            >= self.loaded_lines.len()
+                        {
+                            continue; //We already printed everything in one go
+                        }
+
+                        first_line += self.terminal_height - self.margin_y * 2;
+                        self.clear_screen(&mut content_screen);
+                        self.print_section(first_line, &mut content_screen);
+                    }
+                    _ => {}
+                },
                 Key::Char('e') => match self.state {
                     ReaderState::TocShown => {
-                        self.state = ReaderState::ContentShown;
-                        self.clear_screen(&mut toc_screen);
-                        self.clear_screen(&mut content_screen);
-                        let selected_chapter = &self.toc[self.selected_option];
-                        self.read_from(
-                            selected_chapter,
-                            HtmlReadFrom::Line(1),
-                            &mut content_screen,
+                        self.loaded_lines = HtmlToLine::as_lines(
+                            &self.toc[selected_option].src,
+                            &styler,
+                            MIN_WIDTH,
+                            self.margin_x,
                         );
+                        self.state = ReaderState::ContentShown;
+                        first_line = 0;
+                        self.clear_screen(&mut content_screen);
+                        self.print_section(first_line, &mut content_screen);
                     }
                     _ => {}
                 },
@@ -249,7 +293,7 @@ impl<'a> Papcio<'a> {
                     ReaderState::ContentShown => {
                         self.clear_screen(&mut content_screen);
                         self.state = ReaderState::TocShown;
-                        self.print_toc(&mut toc_screen);
+                        self.print_toc(&mut toc_screen, selected_option);
                     }
                     _ => {
                         self.clear_screen(&mut content_screen);
@@ -260,55 +304,46 @@ impl<'a> Papcio<'a> {
                 _ => {}
             }
         }
+
+        self.clean(&mut content_screen);
+        self.clean(&mut toc_screen);
     }
 
     pub fn run(&mut self, file_path: &str) {
         self.initialize(file_path)
-            .expect("Failed to initialize Papcio");
+            .expect("Failed to initialize EpubReader");
         self.listen();
     }
 
-    pub fn read_from<W: Write>(&self, toc: &Toc, from: HtmlReadFrom, screen: &mut W) {
+    fn print_section<W: Write>(&self, start_line: u16, screen: &mut W) {
+        let MIN_HEIGHT = 50;
+        let end_line = match self.terminal_height < MIN_HEIGHT {
+            true => MIN_HEIGHT,
+            false => start_line + self.terminal_height - self.margin_y * 2,
+        };
+        let lines_to_print = match end_line as usize >= self.loaded_lines.len() {
+            true => &self.loaded_lines[start_line as usize..],
+            false => &self.loaded_lines[start_line as usize..end_line as usize],
+        };
+
+        let mut row = self.margin_y;
+        for line in lines_to_print {
+            write!(screen, "{}{}", cursor::Goto(self.margin_x, row), line);
+            row += 1;
+        }
         screen.flush().unwrap();
-
-        let styler = TagStyler::new();
-        let paragraph_iterator = HtmlParagraphIterator::new(&toc.src, from, &styler);
-
-        for paragraph in paragraph_iterator {
-            write!(screen, "{}", paragraph);
-        }
     }
 
-    pub fn move_selection(&mut self, direction: MoveDirection) {
-        match direction {
-            MoveDirection::Up => {
-                if self.selected_option != 0 {
-                    self.selected_option -= 1
-                }
-            }
-            MoveDirection::Down => {
-                if self.selected_option != self.toc.len() - 1 {
-                    self.selected_option += 1
-                }
-            }
-        }
+    fn update_dimentions(&mut self) {
+        let terminal_size = termion::terminal_size().unwrap();
+        self.terminal_height = terminal_size.1;
+        self.terminal_width = terminal_size.0;
     }
 
-    pub fn update_dimentions(&mut self) {
-        self.terminal_size = termion::terminal_size().unwrap();
-    }
-
-    pub fn print_toc<W: Write>(&self, screen: &mut W) {
-        write!(
-            screen,
-            "{}{}{}",
-            clear::All,
-            cursor::Goto(1, 1),
-            cursor::Hide
-        );
+    fn print_toc<W: Write>(&self, screen: &mut W, selected_option: usize) {
         for (i, e) in self.toc.iter().enumerate() {
-            let start_cell = (usize::from(self.terminal_size.0) / 2) - (e.text.len() / 2);
-            if i == self.selected_option {
+            let start_cell = (usize::from(self.terminal_width) / 2) - (e.text.len() / 2);
+            if i == selected_option {
                 write!(
                     screen,
                     "{}{}{}{}{}",

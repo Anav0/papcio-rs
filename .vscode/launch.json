@@ -1,0 +1,47 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug executable 'papcio'",
+            "cargo": {
+                "args": [
+                    "build",
+                    "--bin=papcio",
+                    "--package=papcio"
+                ],
+                "filter": {
+                    "name": "papcio",
+                    "kind": "bin"
+                }
+            },
+            "args": [
+                "./orwell.epub"
+            ],
+            "cwd": "${workspaceFolder}"
+        },
+        {
+            "type": "lldb",
+            "request": "launch",
+            "name": "Debug unit tests in executable 'papcio'",
+            "cargo": {
+                "args": [
+                    "test",
+                    "--no-run",
+                    "--bin=papcio",
+                    "--package=papcio"
+                ],
+                "filter": {
+                    "name": "papcio",
+                    "kind": "bin"
+                }
+            },
+            "args": [],
+            "cwd": "${workspaceFolder}"
+        }
+    ]
+}

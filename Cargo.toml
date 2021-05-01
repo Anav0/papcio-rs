@@ -1,5 +1,5 @@
 [package]
-name = "papcio-rs"
+name = "papcio"
 version = "0.1.0"
 authors = ["Igor <igor_motyka@mail.com>"]
 edition = "2018"

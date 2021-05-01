@@ -1,23 +1,30 @@
 use termion::{color, style};
 
-pub struct TagStyler {
-    pub new_line: String,
+pub trait Styler {
+    fn style(&self, text: &str, tag: &str) -> String;
 }
+
+pub struct TagStyler {}
+
 impl TagStyler {
     pub fn new() -> Self {
-        TagStyler {
-            new_line: String::from("new_line"),
-        }
+        TagStyler {}
     }
-    pub fn style(&self, text: &str, tag: &str, prepend: &str) -> String {
-        let style = match tag {
+}
+impl Styler for TagStyler {
+    fn style(&self, text: &str, tag: &str) -> String {
+        let new_line = " NEW_LINE ";
+        let formated_text = match tag {
             "a" => format!("{}{}{}", color::Fg(color::Blue), style::Underline, text),
-            "p" | "div" => format!("{}{}{}", text, self.new_line, self.new_line),
-            "h1" | "h2" | "h3" | "h4" | "h6" | "b" => {
-                format!("{}{}{}", style::Bold, text, self.new_line)
+            "p" | "div" => format!("{}{}", new_line, text),
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
+                format!("{}{}{}", style::Bold, new_line, text)
+            }
+            "b" => {
+                format!("{}{}", style::Bold, text)
             }
             "em" => format!("{}{}{}", style::Bold, style::Underline, text),
-            "li" => format!("• {}{}{}", color::Fg(color::Yellow), text, self.new_line),
+            "li" => format!("{}{}• {}", new_line, color::Fg(color::Yellow), text),
             "dt" | "dd" | "blockquote" | "q" => {
                 format!("{}{}", color::Fg(color::Green), text)
             }
@@ -28,8 +35,22 @@ impl TagStyler {
                 style::Bold,
                 text
             ),
-            _ => String::new(),
+            "i" => format!("{}{}", style::Italic, text),
+            "body" | "script" | "head" | "link" | "!DOCTYPE" | "html" | "?xml" => String::new(),
+            _ => text.to_owned(),
         };
-        format!("{}{}{}", prepend, style, style::Reset)
+        format!("{}{}{}", style::Reset, formated_text, style::Reset)
+    }
+}
+
+pub struct EmptyStyler;
+impl EmptyStyler {
+    pub fn new() -> Self {
+        Self {}
+    }
+}
+impl Styler for EmptyStyler {
+    fn style(&self, text: &str, tag: &str) -> std::string::String {
+        text.to_owned()
     }
 }
