@@ -1,64 +1,41 @@
 use crate::config::ReaderConfig;
 use crate::html::HtmlToLine;
-use crate::misc::ReaderState;
-use crate::misc::{Toc, Zipper};
+use crate::misc::{ReaderState, Toc, Zipper};
 use crate::styler::TagStyler;
+use crate::term::{TermSize, Terminal, TermionTerminal};
 use regex::Regex;
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::fs;
 use std::fs::File;
-use std::io::stdin;
-use std::io::stdout;
-use std::io::Write;
+use std::io::{stdin, stdout, Write};
 use std::option::Option::{None, Some};
 use std::path::{Path, PathBuf};
-use termion::cursor;
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
 use termion::screen::AlternateScreen;
-use termion::{clear, color, style};
+use termion::{color, style};
 use xmltree::Element;
 use xmltree::XMLNode::Element as ElementEnum;
 
 pub struct EpubReader<'a> {
     toc: Vec<Toc>,
-    terminal_width: u16,
-    terminal_height: u16,
     state: ReaderState,
+    term: Box<dyn Terminal>,
     config: ReaderConfig<'a>,
     loaded_lines: Vec<String>,
 }
 
 impl<'a> EpubReader<'a> {
     pub fn new() -> Self {
-        let terminal_size = termion::terminal_size().unwrap();
-        let config = ReaderConfig::new(10, 10, 80, 50, "./tmp");
         EpubReader {
-            loaded_lines: vec![],
             toc: vec![],
-            terminal_height: terminal_size.1,
-            terminal_width: terminal_size.0,
             state: ReaderState::TocShown,
-            config,
+            term: Box::new(TermionTerminal::new()),
+            config: ReaderConfig::new(30, 5, "./tmp"),
+            loaded_lines: vec![],
         }
-    }
-
-    fn clear_screen<W: Write>(&self, screen: &mut W) {
-        write!(screen, "{}{}", cursor::Goto(1, 1), clear::All);
-        screen.flush().unwrap();
-    }
-
-    fn clean<W: Write>(&self, screen: &mut W) {
-        write!(
-            screen,
-            "{}{}{}",
-            cursor::Goto(1, 1),
-            clear::All,
-            cursor::Show
-        );
-        screen.flush().unwrap();
     }
 
     fn initialize(&mut self, file_path: &str) -> Result<(), &str> {
@@ -205,15 +182,15 @@ impl<'a> EpubReader<'a> {
     }
 
     fn listen(&mut self) {
+        let terminal_size = self.term.get_size().expect("Failed to get terminal size");
         let mut toc_screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
         let mut content_screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
-        self.update_dimentions();
-        let stdin = stdin();
         let mut selected_option = 0;
         let mut first_line: u16 = 0;
-        self.print_toc(&mut toc_screen, selected_option);
         let styler = TagStyler::new();
+        self.print_toc(&mut toc_screen, selected_option, &terminal_size);
 
+        let stdin = stdin();
         for c in stdin.keys() {
             match c.unwrap() {
                 Key::Char('w') => match self.state {
@@ -221,7 +198,7 @@ impl<'a> EpubReader<'a> {
                         if selected_option != 0 {
                             selected_option -= 1
                         }
-                        self.print_toc(&mut toc_screen, selected_option);
+                        self.print_toc(&mut toc_screen, selected_option, &terminal_size);
                     }
                     _ => {}
                 },
@@ -230,7 +207,7 @@ impl<'a> EpubReader<'a> {
                         if selected_option != self.toc.len() - 1 {
                             selected_option += 1
                         }
-                        self.print_toc(&mut toc_screen, selected_option);
+                        self.print_toc(&mut toc_screen, selected_option, &terminal_size);
                     }
                     _ => {}
                 },
@@ -239,27 +216,31 @@ impl<'a> EpubReader<'a> {
                         if first_line <= 0 {
                             continue;
                         }
-                        first_line -= self.terminal_height - self.config.margin_y * 2;
-                        self.clear_screen(&mut content_screen);
-                        self.print_section(first_line, &mut content_screen);
+                        first_line -= terminal_size.height - self.config.margin_y * 2;
+                        self.term
+                            .clear(&mut content_screen)
+                            .expect("Failed to clear terminal screen");
+                        self.print_section(first_line, &mut content_screen, &terminal_size);
                     }
                     _ => {}
                 },
                 Key::Char('d') => match self.state {
                     ReaderState::ContentShown => {
-                        if usize::from(self.terminal_height) >= self.loaded_lines.len() {
+                        if usize::from(terminal_size.height) >= self.loaded_lines.len() {
                             continue; //We already printed everything in one go
                         }
 
-                        if usize::from(first_line + self.terminal_height - self.config.margin_y)
+                        if usize::from(first_line + terminal_size.height - self.config.margin_y)
                             >= self.loaded_lines.len()
                         {
                             continue; //We already printed everything in one go
                         }
 
-                        first_line += self.terminal_height - self.config.margin_y * 2;
-                        self.clear_screen(&mut content_screen);
-                        self.print_section(first_line, &mut content_screen);
+                        first_line += terminal_size.height - self.config.margin_y * 2;
+                        self.term
+                            .clear(&mut content_screen)
+                            .expect("Failed to clear terminal screen");
+                        self.print_section(first_line, &mut content_screen, &terminal_size);
                     }
                     _ => {}
                 },
@@ -268,34 +249,38 @@ impl<'a> EpubReader<'a> {
                         self.loaded_lines = HtmlToLine::as_lines(
                             &self.toc[selected_option].src,
                             &styler,
-                            self.config.min_width,
-                            self.config.margin_x,
+                            terminal_size.width - (self.config.margin_x * 2),
                         );
                         self.state = ReaderState::ContentShown;
                         first_line = 0;
-                        self.clear_screen(&mut content_screen);
-                        self.print_section(first_line, &mut content_screen);
+                        self.term
+                            .clear(&mut content_screen)
+                            .expect("Failed to clear terminal screen");
+                        self.print_section(first_line, &mut content_screen, &terminal_size);
                     }
                     _ => {}
                 },
                 Key::Char('q') => match self.state {
                     ReaderState::ContentShown => {
-                        self.clear_screen(&mut content_screen);
+                        self.term
+                            .clear(&mut content_screen)
+                            .expect("Failed to clear terminal screen");
                         self.state = ReaderState::TocShown;
-                        self.print_toc(&mut toc_screen, selected_option);
+                        self.print_toc(&mut toc_screen, selected_option, &terminal_size);
                     }
                     _ => {
-                        self.clear_screen(&mut content_screen);
-                        self.clear_screen(&mut toc_screen);
+                        self.term
+                            .clear(&mut content_screen)
+                            .expect("Failed to clear terminal screen");
+                        self.term
+                            .clear(&mut toc_screen)
+                            .expect("Failed to clear terminal screen");
                         break;
                     }
                 },
                 _ => {}
             }
         }
-
-        self.clean(&mut content_screen);
-        self.clean(&mut toc_screen);
     }
 
     pub fn run(&mut self, file_path: &str) {
@@ -304,59 +289,56 @@ impl<'a> EpubReader<'a> {
         self.listen();
     }
 
-    fn print_section<W: Write>(&self, start_line: u16, screen: &mut W) {
-        let end_line = match self.terminal_height < self.config.min_height {
-            true => self.config.min_height,
-            false => start_line + self.terminal_height - self.config.margin_y * 2,
-        };
+    fn print_section<W: Write>(&self, start_line: u16, screen: &mut W, terminal_size: &TermSize) {
+        let end_line = start_line + terminal_size.height - self.config.margin_y * 2;
         let lines_to_print = match end_line as usize >= self.loaded_lines.len() {
             true => &self.loaded_lines[start_line as usize..],
             false => &self.loaded_lines[start_line as usize..end_line as usize],
         };
 
         let mut row = self.config.margin_y;
+
         for line in lines_to_print {
-            write!(
-                screen,
-                "{}{}",
-                cursor::Goto(self.config.margin_x, row),
-                line
-            )
-            .expect("Problem occured while printing book's content");
+            self.term
+                .write(screen, row, self.config.margin_x, line)
+                .expect("Error occured while trying to print lines of text from book's chapter");
             row += 1;
         }
         screen.flush().unwrap();
     }
 
-    fn update_dimentions(&mut self) {
-        let terminal_size = termion::terminal_size().unwrap();
-        self.terminal_height = terminal_size.1;
-        self.terminal_width = terminal_size.0;
-    }
-
-    fn print_toc<W: Write>(&self, screen: &mut W, selected_option: usize) {
+    fn print_toc<W: Write>(
+        &self,
+        screen: &mut W,
+        selected_option: usize,
+        terminal_size: &TermSize,
+    ) {
         for (i, e) in self.toc.iter().enumerate() {
-            let start_cell = (usize::from(self.terminal_width) / 2) - (e.text.len() / 2);
+            let start_cell = (usize::from(terminal_size.width) / 2) - (e.text.len() / 2);
             if i == selected_option {
-                write!(
-                    screen,
-                    "{}{}{}{}{}",
-                    cursor::Goto(start_cell.try_into().unwrap(), (i + 2).try_into().unwrap()),
-                    color::Bg(color::White),
-                    style::Bold,
-                    e.text,
-                    style::Reset,
-                )
-                .unwrap();
+                self.term
+                    .write(
+                        screen,
+                        (i + 2).try_into().unwrap(),
+                        start_cell.try_into().unwrap(),
+                        &format!(
+                            "{}{}{}{}",
+                            color::Bg(color::White),
+                            style::Bold,
+                            e.text,
+                            style::Reset,
+                        ),
+                    )
+                    .expect("Problem occured while trying to print table of content");
             } else {
-                write!(
-                    screen,
-                    "{}{}{}",
-                    cursor::Goto(start_cell.try_into().unwrap(), (i + 2).try_into().unwrap()),
-                    e.text,
-                    style::Reset,
-                )
-                .unwrap();
+                self.term
+                    .write(
+                        screen,
+                        (i + 2).try_into().unwrap(),
+                        start_cell.try_into().unwrap(),
+                        &format!("{}{}", e.text, style::Reset),
+                    )
+                    .expect("Problem occured while trying to print table of content");
             }
         }
         screen.flush().unwrap();

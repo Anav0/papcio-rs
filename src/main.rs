@@ -6,6 +6,7 @@ mod html;
 mod misc;
 mod reader;
 mod styler;
+mod term;
 
 use reader::EpubReader;
 

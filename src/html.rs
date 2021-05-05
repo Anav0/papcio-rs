@@ -15,8 +15,7 @@ impl<'a> HtmlToLine<'a> {
     pub fn as_lines<S: Styler>(
         filepath: &str,
         styler: &'a S,
-        width: u16,
-        margin_x: u16,
+        max_chars_in_line: u16,
     ) -> Vec<String> {
         let html_path = Path::new(filepath);
 
@@ -95,7 +94,6 @@ impl<'a> HtmlToLine<'a> {
             }
 
             //TODO: change this to something better
-            let max_chars_in_line = (width - margin_x * 2) as usize;
             let words = tag_content.split(" ").collect::<Vec<_>>();
             let mut char_counter = 0;
             let mut tmp_words: Vec<&str> = vec![];
@@ -117,7 +115,7 @@ impl<'a> HtmlToLine<'a> {
                     _ => {
                         char_counter += word.chars().count();
                         tmp_words.push(word);
-                        if char_counter >= max_chars_in_line {
+                        if char_counter >= max_chars_in_line as usize {
                             extracted_lines.push(tmp_words.join(" "));
                             tmp_words.clear();
                             char_counter = 0;
@@ -160,7 +158,7 @@ mod tests {
         ];
         let file_path = "./test_data/test_file.html";
         let styler = EmptyStyler::new();
-        let lines = HtmlToLine::as_lines(file_path, &styler, 2, 0);
+        let lines = HtmlToLine::as_lines(file_path, &styler, 2);
 
         assert_eq!(expected_lines.len(), lines.len());
 
