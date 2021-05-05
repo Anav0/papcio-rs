@@ -1,3 +1,4 @@
+use crate::config::ReaderConfig;
 use crate::html::HtmlToLine;
 use crate::misc::ReaderState;
 use crate::misc::{Toc, Zipper};
@@ -22,31 +23,25 @@ use xmltree::Element;
 use xmltree::XMLNode::Element as ElementEnum;
 
 pub struct EpubReader<'a> {
-    TMP_FOLDER: &'a str,
-    CONFIG_FOLDER: &'a str,
     toc: Vec<Toc>,
     terminal_width: u16,
     terminal_height: u16,
     state: ReaderState,
-    margin_x: u16,
-    margin_y: u16,
+    config: ReaderConfig<'a>,
     loaded_lines: Vec<String>,
 }
 
 impl<'a> EpubReader<'a> {
     pub fn new() -> Self {
         let terminal_size = termion::terminal_size().unwrap();
-
+        let config = ReaderConfig::new(10, 10, 80, 50, "./tmp");
         EpubReader {
             loaded_lines: vec![],
-            TMP_FOLDER: "./tmp",
-            CONFIG_FOLDER: "./config",
             toc: vec![],
             terminal_height: terminal_size.1,
             terminal_width: terminal_size.0,
             state: ReaderState::TocShown,
-            margin_x: 8,
-            margin_y: 5,
+            config,
         }
     }
 
@@ -84,13 +79,8 @@ impl<'a> EpubReader<'a> {
             .to_str()
             .expect("Cannot extract epub file name");
 
-        let extract_str = [self.TMP_FOLDER, epub_file_name].join("/");
+        let extract_str = [self.config.tmp_path, epub_file_name].join("/");
         let extract_path = Path::new(&extract_str);
-
-        fs::create_dir_all(self.CONFIG_FOLDER).expect(&format!(
-            "Failed to create config folder at: {}",
-            self.CONFIG_FOLDER
-        ));
 
         if !extract_path.exists() {
             fs::create_dir_all(extract_path).expect("Failed to tmpfolder at");
@@ -222,7 +212,6 @@ impl<'a> EpubReader<'a> {
         let mut selected_option = 0;
         let mut first_line: u16 = 0;
         self.print_toc(&mut toc_screen, selected_option);
-        let MIN_WIDTH = 80;
         let styler = TagStyler::new();
 
         for c in stdin.keys() {
@@ -250,7 +239,7 @@ impl<'a> EpubReader<'a> {
                         if first_line <= 0 {
                             continue;
                         }
-                        first_line -= self.terminal_height - self.margin_y * 2;
+                        first_line -= self.terminal_height - self.config.margin_y * 2;
                         self.clear_screen(&mut content_screen);
                         self.print_section(first_line, &mut content_screen);
                     }
@@ -262,13 +251,13 @@ impl<'a> EpubReader<'a> {
                             continue; //We already printed everything in one go
                         }
 
-                        if usize::from(first_line + self.terminal_height - self.margin_y)
+                        if usize::from(first_line + self.terminal_height - self.config.margin_y)
                             >= self.loaded_lines.len()
                         {
                             continue; //We already printed everything in one go
                         }
 
-                        first_line += self.terminal_height - self.margin_y * 2;
+                        first_line += self.terminal_height - self.config.margin_y * 2;
                         self.clear_screen(&mut content_screen);
                         self.print_section(first_line, &mut content_screen);
                     }
@@ -279,8 +268,8 @@ impl<'a> EpubReader<'a> {
                         self.loaded_lines = HtmlToLine::as_lines(
                             &self.toc[selected_option].src,
                             &styler,
-                            MIN_WIDTH,
-                            self.margin_x,
+                            self.config.min_width,
+                            self.config.margin_x,
                         );
                         self.state = ReaderState::ContentShown;
                         first_line = 0;
@@ -316,19 +305,24 @@ impl<'a> EpubReader<'a> {
     }
 
     fn print_section<W: Write>(&self, start_line: u16, screen: &mut W) {
-        let MIN_HEIGHT = 50;
-        let end_line = match self.terminal_height < MIN_HEIGHT {
-            true => MIN_HEIGHT,
-            false => start_line + self.terminal_height - self.margin_y * 2,
+        let end_line = match self.terminal_height < self.config.min_height {
+            true => self.config.min_height,
+            false => start_line + self.terminal_height - self.config.margin_y * 2,
         };
         let lines_to_print = match end_line as usize >= self.loaded_lines.len() {
             true => &self.loaded_lines[start_line as usize..],
             false => &self.loaded_lines[start_line as usize..end_line as usize],
         };
 
-        let mut row = self.margin_y;
+        let mut row = self.config.margin_y;
         for line in lines_to_print {
-            write!(screen, "{}{}", cursor::Goto(self.margin_x, row), line);
+            write!(
+                screen,
+                "{}{}",
+                cursor::Goto(self.config.margin_x, row),
+                line
+            )
+            .expect("Problem occured while printing book's content");
             row += 1;
         }
         screen.flush().unwrap();

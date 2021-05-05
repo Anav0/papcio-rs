@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use std::env;
 
+mod config;
 mod html;
 mod misc;
 mod reader;

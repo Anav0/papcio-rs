@@ -162,7 +162,6 @@ mod tests {
         let styler = EmptyStyler::new();
         let lines = HtmlToLine::as_lines(file_path, &styler, 2, 0);
 
-        println!("{:?}", lines);
         assert_eq!(expected_lines.len(), lines.len());
 
         for (i, expected_line) in expected_lines.iter().enumerate() {
