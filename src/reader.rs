@@ -1,7 +1,9 @@
 use crate::config::ReaderConfig;
 use crate::html::HtmlToLine;
 use crate::misc::{ReaderState, Toc, Zipper};
+use crate::styler::Styler;
 use crate::styler::TagStyler;
+use crate::styler::TocStyler;
 use crate::term::{TermSize, Terminal, TermionTerminal};
 use regex::Regex;
 use std::collections::HashMap;
@@ -188,7 +190,13 @@ impl<'a> EpubReader<'a> {
         let mut selected_option = 0;
         let mut first_line: u16 = 0;
         let styler = TagStyler::new();
-        self.print_toc(&mut toc_screen, selected_option, &terminal_size);
+        let toc_styler = TocStyler::new();
+        self.print_toc(
+            &mut toc_screen,
+            selected_option,
+            &terminal_size,
+            &toc_styler,
+        );
 
         let stdin = stdin();
         for c in stdin.keys() {
@@ -198,7 +206,12 @@ impl<'a> EpubReader<'a> {
                         if selected_option != 0 {
                             selected_option -= 1
                         }
-                        self.print_toc(&mut toc_screen, selected_option, &terminal_size);
+                        self.print_toc(
+                            &mut toc_screen,
+                            selected_option,
+                            &terminal_size,
+                            &toc_styler,
+                        );
                     }
                     _ => {}
                 },
@@ -207,7 +220,12 @@ impl<'a> EpubReader<'a> {
                         if selected_option != self.toc.len() - 1 {
                             selected_option += 1
                         }
-                        self.print_toc(&mut toc_screen, selected_option, &terminal_size);
+                        self.print_toc(
+                            &mut toc_screen,
+                            selected_option,
+                            &terminal_size,
+                            &toc_styler,
+                        );
                     }
                     _ => {}
                 },
@@ -266,7 +284,12 @@ impl<'a> EpubReader<'a> {
                             .clear(&mut content_screen)
                             .expect("Failed to clear terminal screen");
                         self.state = ReaderState::TocShown;
-                        self.print_toc(&mut toc_screen, selected_option, &terminal_size);
+                        self.print_toc(
+                            &mut toc_screen,
+                            selected_option,
+                            &terminal_size,
+                            &toc_styler,
+                        );
                     }
                     _ => {
                         self.term
@@ -312,6 +335,7 @@ impl<'a> EpubReader<'a> {
         screen: &mut W,
         selected_option: usize,
         terminal_size: &TermSize,
+        styler: &dyn Styler,
     ) {
         for (i, e) in self.toc.iter().enumerate() {
             let start_cell = (usize::from(terminal_size.width) / 2) - (e.text.len() / 2);
@@ -321,13 +345,7 @@ impl<'a> EpubReader<'a> {
                         screen,
                         (i + 2).try_into().unwrap(),
                         start_cell.try_into().unwrap(),
-                        &format!(
-                            "{}{}{}{}",
-                            color::Bg(color::White),
-                            style::Bold,
-                            e.text,
-                            style::Reset,
-                        ),
+                        &styler.style(&e.text, "selected"),
                     )
                     .expect("Problem occured while trying to print table of content");
             } else {
@@ -336,7 +354,7 @@ impl<'a> EpubReader<'a> {
                         screen,
                         (i + 2).try_into().unwrap(),
                         start_cell.try_into().unwrap(),
-                        &format!("{}{}", e.text, style::Reset),
+                        &styler.style(&e.text, "not_selected"),
                     )
                     .expect("Problem occured while trying to print table of content");
             }

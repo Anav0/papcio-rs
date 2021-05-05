@@ -1,8 +1,5 @@
+use crate::styler::Styler;
 use termion::{color, style};
-
-pub trait Styler {
-    fn style(&self, text: &str, tag: &str) -> String;
-}
 
 pub struct TagStyler {}
 
@@ -12,9 +9,9 @@ impl TagStyler {
     }
 }
 impl Styler for TagStyler {
-    fn style(&self, text: &str, tag: &str) -> String {
+    fn style(&self, text: &str, key: &str) -> String {
         let new_line = " NEW_LINE ";
-        let formated_text = match tag {
+        let formated_text = match key {
             "a" => format!("{}{}{}", color::Fg(color::Blue), style::Underline, text),
             "p" | "div" => format!("{}{}", new_line, text),
             "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => {
@@ -40,17 +37,5 @@ impl Styler for TagStyler {
             _ => text.to_owned(),
         };
         format!("{}{}{}", style::Reset, formated_text, style::Reset)
-    }
-}
-
-pub struct EmptyStyler;
-impl EmptyStyler {
-    pub fn new() -> Self {
-        Self {}
-    }
-}
-impl Styler for EmptyStyler {
-    fn style(&self, text: &str, tag: &str) -> std::string::String {
-        text.to_owned()
     }
 }
