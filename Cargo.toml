@@ -1,6 +1,6 @@
 [package]
 name = "papcio"
-version = "0.1.0"
+version = "0.0.1"
 authors = ["Igor <igor_motyka@mail.com>"]
 edition = "2018"
 
@@ -11,3 +11,6 @@ zip = "0.5"
 xmltree = "0.10.2"
 regex = "1.4.5"
 termion = "*"
+signal-hook = "0.3.8"
+libc = "0.2.94"
+futures = "0.3.14"

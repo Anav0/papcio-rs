@@ -13,6 +13,8 @@ use std::fs::File;
 use std::io::{stdin, stdout, Write};
 use std::option::Option::{None, Some};
 use std::path::{Path, PathBuf};
+use std::thread;
+use std::time::Duration;
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
@@ -184,7 +186,7 @@ impl<'a> EpubReader<'a> {
     }
 
     fn listen(&mut self) {
-        let terminal_size = self.term.get_size().expect("Failed to get terminal size");
+        let mut terminal_size = self.term.get_size().expect("Failed to get terminal size");
         let mut toc_screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
         let mut content_screen = AlternateScreen::from(stdout().into_raw_mode().unwrap());
         let mut selected_option = 0;
@@ -198,111 +200,152 @@ impl<'a> EpubReader<'a> {
             &toc_styler,
         );
 
-        let stdin = stdin();
-        for c in stdin.keys() {
-            match c.unwrap() {
-                Key::Char('w') => match self.state {
-                    ReaderState::TocShown => {
-                        if selected_option != 0 {
-                            selected_option -= 1
-                        }
-                        self.print_toc(
-                            &mut toc_screen,
-                            selected_option,
-                            &terminal_size,
-                            &toc_styler,
-                        );
-                    }
-                    _ => {}
-                },
-                Key::Char('s') => match self.state {
-                    ReaderState::TocShown => {
-                        if selected_option != self.toc.len() - 1 {
-                            selected_option += 1
-                        }
-                        self.print_toc(
-                            &mut toc_screen,
-                            selected_option,
-                            &terminal_size,
-                            &toc_styler,
-                        );
-                    }
-                    _ => {}
-                },
-                Key::Char('a') => match self.state {
-                    ReaderState::ContentShown => {
-                        if first_line <= 0 {
-                            continue;
-                        }
-                        first_line -= terminal_size.height - self.config.margin_y * 2;
-                        self.term
-                            .clear(&mut content_screen)
-                            .expect("Failed to clear terminal screen");
-                        self.print_section(first_line, &mut content_screen, &terminal_size);
-                    }
-                    _ => {}
-                },
-                Key::Char('d') => match self.state {
-                    ReaderState::ContentShown => {
-                        if usize::from(terminal_size.height) >= self.loaded_lines.len() {
-                            continue; //We already printed everything in one go
-                        }
+        let resize_reciver = self
+            .term
+            .on_resize()
+            .expect("Failed to get reciver on resize channel");
 
-                        if usize::from(first_line + terminal_size.height - self.config.margin_y)
-                            >= self.loaded_lines.len()
-                        {
-                            continue; //We already printed everything in one go
-                        }
+        let input_reciver = self
+            .term
+            .on_input()
+            .expect("Failed to get reciver on input channel");
 
-                        first_line += terminal_size.height - self.config.margin_y * 2;
-                        self.term
-                            .clear(&mut content_screen)
-                            .expect("Failed to clear terminal screen");
-                        self.print_section(first_line, &mut content_screen, &terminal_size);
+        loop {
+            match resize_reciver.try_recv() {
+                Ok(term_size) => {
+                    terminal_size = term_size;
+                    match self.state {
+                        ReaderState::ContentShown => {
+                            self.print_section(first_line, &mut content_screen, &terminal_size);
+                        }
+                        ReaderState::TocShown => {
+                            self.print_toc(
+                                &mut toc_screen,
+                                selected_option,
+                                &terminal_size,
+                                &toc_styler,
+                            );
+                        }
                     }
-                    _ => {}
-                },
-                Key::Char('e') => match self.state {
-                    ReaderState::TocShown => {
-                        self.loaded_lines = HtmlToLine::as_lines(
-                            &self.toc[selected_option].src,
-                            &styler,
-                            terminal_size.width - (self.config.margin_x * 2),
-                        );
-                        self.state = ReaderState::ContentShown;
-                        first_line = 0;
-                        self.term
-                            .clear(&mut content_screen)
-                            .expect("Failed to clear terminal screen");
-                        self.print_section(first_line, &mut content_screen, &terminal_size);
-                    }
-                    _ => {}
-                },
-                Key::Char('q') => match self.state {
-                    ReaderState::ContentShown => {
-                        self.term
-                            .clear(&mut content_screen)
-                            .expect("Failed to clear terminal screen");
-                        self.state = ReaderState::TocShown;
-                        self.print_toc(
-                            &mut toc_screen,
-                            selected_option,
-                            &terminal_size,
-                            &toc_styler,
-                        );
-                    }
-                    _ => {
-                        self.term
-                            .clear(&mut content_screen)
-                            .expect("Failed to clear terminal screen");
-                        self.term
-                            .clear(&mut toc_screen)
-                            .expect("Failed to clear terminal screen");
-                        break;
-                    }
-                },
+                }
                 _ => {}
             }
+
+            match input_reciver.try_recv() {
+                Ok(key) => {
+                    if key == self.config.keys.up {
+                        match self.state {
+                            ReaderState::TocShown => {
+                                if selected_option != 0 {
+                                    selected_option -= 1
+                                }
+                                self.print_toc(
+                                    &mut toc_screen,
+                                    selected_option,
+                                    &terminal_size,
+                                    &toc_styler,
+                                );
+                            }
+                            _ => {}
+                        }
+                    } else if key == self.config.keys.down {
+                        match self.state {
+                            ReaderState::TocShown => {
+                                if selected_option != self.toc.len() - 1 {
+                                    selected_option += 1
+                                }
+                                self.print_toc(
+                                    &mut toc_screen,
+                                    selected_option,
+                                    &terminal_size,
+                                    &toc_styler,
+                                );
+                            }
+                            _ => {}
+                        }
+                    } else if key == self.config.keys.left {
+                        match self.state {
+                            ReaderState::ContentShown => {
+                                if first_line <= 0 {
+                                    continue;
+                                }
+                                first_line -= terminal_size.height - self.config.margin_y * 2;
+                                self.term
+                                    .clear(&mut content_screen)
+                                    .expect("Failed to clear terminal screen");
+                                self.print_section(first_line, &mut content_screen, &terminal_size);
+                            }
+                            _ => {}
+                        }
+                    } else if key == self.config.keys.right {
+                        match self.state {
+                            ReaderState::ContentShown => {
+                                if usize::from(terminal_size.height) >= self.loaded_lines.len() {
+                                    continue; //We already printed everything in one go
+                                }
+
+                                if usize::from(
+                                    first_line + terminal_size.height - self.config.margin_y,
+                                ) >= self.loaded_lines.len()
+                                {
+                                    continue; //We already printed everything in one go
+                                }
+
+                                first_line += terminal_size.height - self.config.margin_y * 2;
+                                self.term
+                                    .clear(&mut content_screen)
+                                    .expect("Failed to clear terminal screen");
+                                self.print_section(first_line, &mut content_screen, &terminal_size);
+                            }
+                            _ => {}
+                        }
+                    } else if key == self.config.keys.select {
+                        match self.state {
+                            ReaderState::TocShown => {
+                                self.loaded_lines = HtmlToLine::as_lines(
+                                    &self.toc[selected_option].src,
+                                    &styler,
+                                    terminal_size.width - (self.config.margin_x * 2),
+                                );
+                                self.state = ReaderState::ContentShown;
+                                first_line = 0;
+                                self.term
+                                    .clear(&mut content_screen)
+                                    .expect("Failed to clear terminal screen");
+                                self.print_section(first_line, &mut content_screen, &terminal_size);
+                            }
+                            _ => {}
+                        }
+                    } else if key == self.config.keys.back {
+                        match self.state {
+                            ReaderState::ContentShown => {
+                                self.term
+                                    .clear(&mut content_screen)
+                                    .expect("Failed to clear terminal screen");
+                                self.state = ReaderState::TocShown;
+                                self.print_toc(
+                                    &mut toc_screen,
+                                    selected_option,
+                                    &terminal_size,
+                                    &toc_styler,
+                                );
+                            }
+                            _ => {
+                                self.term
+                                    .clear(&mut content_screen)
+                                    .expect("Failed to clear terminal screen");
+                                self.term
+                                    .clear(&mut toc_screen)
+                                    .expect("Failed to clear terminal screen");
+                                break;
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+
+            thread::sleep(Duration::from_millis(16));
         }
     }
 
@@ -313,6 +356,7 @@ impl<'a> EpubReader<'a> {
     }
 
     fn print_section<W: Write>(&self, start_line: u16, screen: &mut W, terminal_size: &TermSize) {
+        self.term.clear(screen).unwrap();
         let end_line = start_line + terminal_size.height - self.config.margin_y * 2;
         let lines_to_print = match end_line as usize >= self.loaded_lines.len() {
             true => &self.loaded_lines[start_line as usize..],
@@ -337,6 +381,7 @@ impl<'a> EpubReader<'a> {
         terminal_size: &TermSize,
         styler: &dyn Styler,
     ) {
+        self.term.clear(screen).unwrap();
         for (i, e) in self.toc.iter().enumerate() {
             let start_cell = (usize::from(terminal_size.width) / 2) - (e.text.len() / 2);
             if i == selected_option {
