@@ -51,7 +51,7 @@ impl<'a> EpubReader<'a> {
         }
 
         if epub_file_path.is_dir() {
-            panic!("File path provided leads to ssomehting other than file")
+            panic!("File path provided leads to something other than file")
         }
 
         let epub_file_name = epub_file_path
@@ -64,7 +64,12 @@ impl<'a> EpubReader<'a> {
         let extract_path = Path::new(&extract_str);
 
         if !extract_path.exists() {
-            fs::create_dir_all(extract_path).expect("Failed to tmpfolder at");
+            fs::create_dir_all(extract_path).expect(&format!(
+                "Failed to create temporary folder at: {}",
+                extract_str
+            ));
+
+            //@ Dependency: Replace Zipper with our own functions and structs
             Zipper::unzip(file_path, &extract_path).expect("Failed to unzip file");
         }
 
@@ -94,14 +99,17 @@ impl<'a> EpubReader<'a> {
         }
 
         //Get link to TOC
-        let content_file_contents =
-            &fs::read_to_string(&content_path).expect("Failed to read toc file content");
-        let tag = &Regex::new(r"<.*application/x-dtbncx\+xml.*/>")
+        let content_opf =
+            fs::read_to_string(&content_path).expect("Failed to read toc file content");
+        let toc_tag = &Regex::new(r"<.*application/x-dtbncx\+xml.*/>")
             .unwrap()
-            .captures(content_file_contents)
+            .captures(&content_opf)
             .expect("Could't find toc lick in content.opf")[0];
 
-        let toc_path = match Regex::new("<.*href=\"(.*?)\".*/>").unwrap().captures(tag) {
+        let toc_path = match Regex::new("<.*href=\"(.*?)\".*/>")
+            .unwrap()
+            .captures(toc_tag)
+        {
             Some(captures) => captures[1].to_owned(),
             None => {
                 panic!("Could't find toc location in content.opf")
