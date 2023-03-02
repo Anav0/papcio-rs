@@ -1,5 +1,6 @@
+use crossterm::style::Stylize;
+
 use crate::styler::Styler;
-use termion::{color, style};
 
 pub struct TocStyler {}
 impl TocStyler {
@@ -8,20 +9,12 @@ impl TocStyler {
     }
 }
 impl Styler for TocStyler {
-    fn style(&self, text: &str, key: &str) -> std::string::String {
+    fn style(&self, text: &str, key: &str) -> String {
         let formated_text = match key {
-            "not_selected" => {
-                format!("{}{}{}", style::Bold, text, style::Reset,)
-            }
-            "selected" => format!(
-                "{}{}{}{}",
-                color::Bg(color::White),
-                style::Bold,
-                text,
-                style::Reset,
-            ),
-            _ => text.to_owned(),
+            "not_selected" => text.bold().reset(),
+            "selected" => text.on_white().bold().reset(),
+            _ => text.black(),
         };
-        format!("{}{}{}", style::Reset, formated_text, style::Reset)
+        formated_text.reset().to_string()
     }
 }

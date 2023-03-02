@@ -7,10 +7,8 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-zip = "0.5.13"
+zip = "0.6.4"
 xmltree = "0.10.3"
-regex = "1.5.4"
-crossterm="0.2"
-signal-hook = "0.3.13"
-libc = "0.2.112"
-futures = "0.3.19"
+regex = "1.7"
+crossterm="0.26"
+futures = "0.3"

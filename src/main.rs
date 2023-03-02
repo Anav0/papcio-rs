@@ -18,6 +18,7 @@ fn main() -> std::io::Result<()> {
     }
 
     let file_path: &String = &args[1];
+    let x = 10;
     println!("{:?}", file_path);
 
     let mut papcio = EpubReader::new();
