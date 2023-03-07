@@ -5,20 +5,14 @@ use crate::styler::Styler;
 use crate::styler::TagStyler;
 use crate::styler::TocStyler;
 use crate::term::{TermSize, Terminal, TermionTerminal};
-use crossterm::cursor::MoveTo;
-use crossterm::style::PrintStyledContent;
-use crossterm::style::Stylize;
 use crossterm::terminal::enable_raw_mode;
-use crossterm::terminal::is_raw_mode_enabled;
-use crossterm::terminal::Clear;
-use crossterm::terminal::ClearType;
-use crossterm::{cursor, ExecutableCommand, QueueableCommand};
 use regex::Regex;
 use std::collections::HashMap;
 use std::convert::TryInto;
+use std::error;
 use std::fs;
 use std::fs::File;
-use std::io::{stdin, stdout, Write};
+use std::io::{stdin, stdout, ErrorKind, Write};
 use std::option::Option::{None, Some};
 use std::path::{Path, PathBuf};
 use std::thread;
@@ -45,23 +39,24 @@ impl<'a> EpubReader<'a> {
         }
     }
 
-    fn initialize(&mut self, file_path: &str) -> Result<(), &str> {
-        //Extract .epub file
+    fn initialize(&mut self, file_path: &str) -> Result<(), Box<dyn error::Error>> {
         let epub_file_path = Path::new(file_path);
 
         if !epub_file_path.exists() {
-            panic!("File doesn't exists")
+            return Err(Box::new(std::io::Error::new(
+                ErrorKind::NotFound,
+                "File doesn't exists",
+            )));
         }
 
         if epub_file_path.is_dir() {
-            panic!("File path provided leads to something other than file")
+            return Err(Box::new(std::io::Error::new(
+                ErrorKind::Other,
+                "File path provided leads to something other than file",
+            )));
         }
 
-        let epub_file_name = epub_file_path
-            .file_stem()
-            .expect("Cannot extract epub file name")
-            .to_str()
-            .expect("Cannot extract epub file name");
+        let epub_file_name = epub_file_path.file_stem().unwrap().to_str().unwrap();
 
         let extract_str = [self.config.tmp_path, epub_file_name].join("/");
         let extract_path = Path::new(&extract_str);
@@ -83,13 +78,11 @@ impl<'a> EpubReader<'a> {
 
         let mut content_path = PathBuf::new();
         content_path.push(&extract_str);
-        match Regex::new("<rootfile.*full-path=\"(.*?)\".*")
-            .unwrap()
-            .captures(
-                fs::read_to_string(&container_xml_str)
-                    .expect("Failed to read container xml file")
-                    .as_str(),
-            ) {
+        match Regex::new("<rootfile.*full-path=\"(.*?)\".*")?.captures(
+            fs::read_to_string(&container_xml_str)
+                .expect("Failed to read container xml file")
+                .as_str(),
+        ) {
             Some(captured) => {
                 if captured.len() != 2 {
                     panic!("Could't find content.opf location in container.xml")
@@ -194,20 +187,19 @@ impl<'a> EpubReader<'a> {
         Ok(())
     }
 
-    fn listen(&mut self) {
-        let mut terminal_size = self.term.get_size().expect("Failed to get terminal size");
+    fn listen(&mut self) -> Result<(), std::io::Error> {
+        let mut terminal_size = self.term.get_size()?;
 
         //TODO: Move
-        enable_raw_mode().expect("Failed to enter raw mode");
+        enable_raw_mode()?;
 
-        let mut toc_screen = stdout();
         let mut toc_screen = stdout();
         let mut content_screen = stdout();
 
         let mut selected_option = 0;
         let mut first_line: u16 = 0;
         let styler = TagStyler::new();
-        let toc_styler = TagStyler::new();
+        let toc_styler = TocStyler::new();
 
         self.print_toc(
             &mut toc_screen,
@@ -351,12 +343,14 @@ impl<'a> EpubReader<'a> {
 
             thread::sleep(Duration::from_millis(16)); // 60 fps
         }
+
+        Ok(())
     }
 
-    pub fn run(&mut self, file_path: &str) {
-        self.initialize(file_path)
-            .expect("Failed to initialize EpubReader");
-        self.listen();
+    pub fn run(&mut self, file_path: &str) -> Result<(), Box<dyn error::Error>> {
+        self.initialize(file_path)?;
+        self.listen()?;
+        Ok(())
     }
 
     fn print_section<W: Write>(&self, start_line: u16, screen: &mut W, terminal_size: &TermSize) {

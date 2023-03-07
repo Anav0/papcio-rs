@@ -35,13 +35,14 @@ impl Terminal for TermionTerminal {
     fn write(&self, stdout: &mut dyn Write, row: u16, column: u16, content: &str) {
         stdout.queue(MoveTo(column, row)).unwrap();
         stdout
-            .queue(style::PrintStyledContent(content.red()))
+            .queue(style::PrintStyledContent(content.black()))
             .unwrap();
     }
 
     fn clear(&self, stdout: &mut dyn Write) {
         stdout.queue(MoveTo(1, 1)).unwrap();
         stdout.execute(Clear(ClearType::All)).unwrap();
+        stdout.execute(Clear(ClearType::Purge)).unwrap();
     }
 
     fn get_size(&self) -> Result<TermSize> {

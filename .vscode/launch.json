@@ -20,7 +20,7 @@
                 }
             },
             "args": [
-                "./orwell.epub"
+                "./test_data/glantz1.epub"
             ],
             "cwd": "${workspaceFolder}"
         },

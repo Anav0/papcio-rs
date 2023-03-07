@@ -12,18 +12,19 @@ impl Styler for TagStyler {
     fn style(&self, text: &str, key: &str) -> String {
         let new_line = " NEW_LINE ";
         let formated_text = match key {
-            "a" => text.blue().underline(crossterm::style::Color::Black),
-            "p" | "div" => text.black(),
-            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => text.black().bold(),
-            "b" => text.black().bold(),
-            "em" => text.black().italic(),
+            "a" => text.blue().underline(crossterm::style::Color::Blue),
+            "p" | "div" => text.red(),
+            "h1" | "h2" | "h3" | "h4" | "h5" | "h6" => text.green().bold(),
+            "b" => text.white().bold(),
+            "em" => text.white().italic(),
             "li" => text.yellow(),
             "dt" | "dd" | "blockquote" | "q" => text.green().italic(),
-            "span" => text.black().on_blue().bold(),
-            "i" => text.italic(),
-            "body" | "script" | "head" | "link" | "!DOCTYPE" | "html" | "?xml" => "".black(),
-            _ => text.black(),
+            "span" => text.white().on_blue().bold(),
+            "i" => text.white().italic(),
+            "body" | "script" | "head" | "link" | "!DOCTYPE" | "html" | "?xml" => "".white(),
+            _ => text.white(),
         };
-        formated_text.reset().to_string()
+
+        formated_text.to_string()
     }
 }

@@ -11,10 +11,9 @@ impl TocStyler {
 impl Styler for TocStyler {
     fn style(&self, text: &str, key: &str) -> String {
         let formated_text = match key {
-            "not_selected" => text.bold().reset(),
-            "selected" => text.on_white().bold().reset(),
-            _ => text.black(),
+            "selected" => text.black().on_blue(),
+            _ => text.white(),
         };
-        formated_text.reset().to_string()
+        formated_text.bold().to_string()
     }
 }
